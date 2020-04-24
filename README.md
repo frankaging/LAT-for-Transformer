@@ -1,5 +1,4 @@
-# Anonymous Code Base
-
+# Layerwise Attention Tracing for Attention-based Deep Neural Network
 Codebase for our submussion to EMNLP2020 Confluence
 
 ## Provided Models
@@ -27,13 +26,13 @@ You will first need to download all the datasets needed and put it under the des
 For all running on SEND,
 ```python
 cd code/model
-python train.py --dataset SEND
+python train.py -dataset SEND
 ```
 
 For all running on SST,
 ```python
 cd code/model
-python train.py --dataset SST
+python train.py -dataset SST
 ```
 
 ## Experiment You Can Try
@@ -43,7 +42,7 @@ After you train you model, you can place your model under save_model directory w
 For calculating the token level attentions (must run this first),
 ```python
 cd code/model
-python attn_analyze.py --dataset [SEND or SST]
+python attn_analyze.py -dataset [SEND or SST]
 ```
 
 For generating word cloud based on attentions,
@@ -61,7 +60,7 @@ python sentence_highlight.py
 For generating visualization of transformer's attention,
 ```python
 cd code/model
-python attention_viz.py --dataset [SEND or SST]
+python attention_viz.py -dataset [SEND or SST]
 ```
 
 ## License
