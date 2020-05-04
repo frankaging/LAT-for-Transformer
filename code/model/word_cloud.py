@@ -19,11 +19,13 @@ def plot_unsign():
                 continue
             word_score[row[0]] = int(float(row[3]) * 100)
 
-    wordcloud = WordCloud(background_color="white").generate_from_frequencies(word_score)
+    wordcloud = WordCloud(width=1600, height=800).generate_from_frequencies(word_score)
     # Display the generated image:
     # the matplotlib way:
-    plt.imshow(wordcloud, interpolation='bilinear')
+    plt.figure( figsize=(20,10), facecolor='k')
+    plt.imshow(wordcloud)
     plt.axis("off")
-    plt.show()
+    plt.tight_layout(pad=0)
+    plt.savefig('../../presentation/plots/wordcloud_send.png', facecolor='k', bbox_inches='tight')
 
 plot_unsign()

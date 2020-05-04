@@ -83,7 +83,10 @@ class TransformerLinearAttn(nn.Module):
         self.encoder_gate = nn.Sequential(nn.Linear(self.encoder_out, 128),
                             nn.ReLU(),
                             nn.Dropout(0.3),
-                            nn.Linear(128, 1))
+                            nn.Linear(128, 64),
+                            nn.ReLU(),
+                            nn.Dropout(0.3),
+                            nn.Linear(64, 1))
 
         # final output layers
         final_out = self.encoder_out
@@ -159,7 +162,7 @@ class TransformerLinearAttn(nn.Module):
         raw_attns = []
         for h in range(tf_attns.shape[0]):
             tf_attn = tf_attns[h]
-            pre_attn = attn.permute(0, 2, 1)
+            pre_attn = attn.clone().permute(0, 2, 1)
             for i in reversed(range(self.att_n_layer)):
                 curr_tf_attn = torch.matmul(pre_attn, tf_attn[i])
                 pre_attn = curr_tf_attn
@@ -182,8 +185,15 @@ class TransformerLinearAttn(nn.Module):
         attended_out, tf_attns,_,_,_,_,_,_,_,_,_,_ = \
             self.attendedEncoder(inputs,
                                  mask_bool)
+        # context layer
+        attn = self.encoder_gate(attended_out)
+        attn = attn.masked_fill(mask_bool == 0, -1e9)
+        attn = F.softmax(attn, dim=1)
+
+        ctx_attn = attn.clone().squeeze(dim=-1)
         tf_attns = torch.stack(tf_attns, dim=0).permute(1,2,0,3,4).contiguous()
-        return tf_attns
+
+        return tf_attns, ctx_attn
 
 class TransformerLSTMAttn(nn.Module):
     '''
@@ -234,7 +244,10 @@ class TransformerLSTMAttn(nn.Module):
         self.encoder_gate = nn.Sequential(nn.Linear(self.encoder_out, 128),
                             nn.ReLU(),
                             nn.Dropout(0.3),
-                            nn.Linear(128, 1))
+                            nn.Linear(128, 64),
+                            nn.ReLU(),
+                            nn.Dropout(0.3),
+                            nn.Linear(64, 1))
 
         # second layer recurrent network
         self.rnn_in = self.encoder_out
@@ -509,3 +522,48 @@ class TransformerLSTMAttn(nn.Module):
         # summarize by taking sum of lap for each vector
         attn_lap = torch.stack(attn_lap, dim=0).sum(dim=-1)
         return attn_lap
+
+    def backward_tf_attn(self, inputs, length, token_length, mask=None):
+        '''
+        This is returning the transformer attention for each layer and each head.
+        '''
+        # set the input to only single channel
+        single_mod = inputs['linguistic']
+
+        # generate token mask for encoder to use (only for att model)
+        global_max_token_length = single_mod.shape[2]
+        token_mask, token_len_pad = generate_token_mask(length, token_length,
+                                                        global_max_token_length,
+                                                        self.device)
+
+        # params
+        batch_size = len(length)
+        assert(batch_size == single_mod.shape[0])
+        max_len = max(length)
+        assert(max_len == single_mod.shape[1])
+        max_token = token_mask.shape[-1]
+
+        # reshape
+        single_mod_flat = single_mod.reshape(batch_size*max_len, max_token, self.encoder_in)
+        token_len_pad_flat = token_len_pad.reshape(batch_size*max_len,)
+        token_mask_flat = token_mask.reshape(batch_size*max_len, -1)
+
+        # transformer encoder
+        attended_out, tf_attns, \
+        x_1_pre_list, x_1_post_list, x_2_pre_list, x_2_post_list, \
+        q_ma_last_pre_list, q_ma_last_post_list, \
+        attn_pre_list, attn_post_list, \
+        v_ma_first_pre_list, v_ma_first_post_list = \
+            self.attendedEncoder(single_mod_flat,
+                                 token_mask_flat.unsqueeze(dim=-1))
+
+        # get gated attention
+        attn = self.encoder_gate(attended_out)
+        token_mask_flat = token_mask_flat.unsqueeze(dim=-1)
+        attn = attn.masked_fill(token_mask_flat == 0, -1e9)
+        attn = F.softmax(attn, dim=1)
+
+        ctx_attn = attn.clone().squeeze(dim=-1)
+        tf_attns = torch.stack(tf_attns, dim=0).permute(1,2,0,3,4).contiguous()
+
+        return tf_attns, ctx_attn

@@ -119,6 +119,8 @@ def evaluateOnEval(input_data, input_target, lengths, token_lengths, model, crit
     model.eval()
     predictions = []
     weights_total = []
+    tf_attns_total = []
+    ctx_attns_total = []
     actuals = []
     data_num = 0
     loss, ccc = 0.0, []
@@ -142,6 +144,9 @@ def evaluateOnEval(input_data, input_target, lengths, token_lengths, model, crit
         output = model.forward(data, lengths, token_lengths, mask)
         # Also get the weight
         weights = model.backward_nlap(data, lengths, token_lengths, mask)
+        tf_weights, ctx_weights = model.backward_tf_attn(data, lengths, token_lengths, mask)
+        tf_attns_total.append(tf_weights)
+        ctx_attns_total.append(ctx_weights)
         weights_total.append(weights)
 
         predictions.append(output.reshape(-1).tolist())
@@ -162,7 +167,7 @@ def evaluateOnEval(input_data, input_target, lengths, token_lengths, model, crit
         index += 1
     # Average losses and print
     loss /= data_num
-    return ccc, predictions, actuals, weights_total
+    return ccc, predictions, actuals, weights_total, tf_attns_total, ctx_attns_total
 
 def plot_predictions(dataset, predictions, metric, args, fig_path=None):
     """Plots predictions against ratings for representative fits."""
@@ -538,7 +543,7 @@ def SEND(args):
 
     # evalution
     with torch.no_grad():
-        ccc, pred, actuals, weights_total = \
+        ccc, pred, actuals, weights_total, tf_attns_total, ctx_attns_total = \
             evaluateOnEval(input_padded_eval, ratings_padded_eval, seq_lens_eval, token_lens_eval,
                             model, criterion, args)
     stats = {'ccc': np.mean(ccc), 'ccc_std': np.std(ccc)}
@@ -571,31 +576,40 @@ def SEND(args):
     labels_plot = dict()
     sentence_plot = dict()
 
+    tf_attns_plot = dict()
+    ctx_attns_plot = dict()
+
+    seq_ccc_plot = dict()
 
     for i in range(len(seq_ccc)):
         actual_r = actuals[seq_index[i]]
         pred_r = pred[seq_index[i]]
 
         # temp plot
-        t = []
-        curr_t = 0.0
-        for ii in actual_r:
-            t.append(curr_t)
-            curr_t += 5
-        fig = plt.figure()
-        plt.plot(t, pred_r, '-' , color='r', linewidth=2.0, label='Prediction')
-        plt.legend()
-        plt.plot(t, actual_r, '--' , color='b', linewidth=2.0, label='Actual')
-        plt.legend()
-        plt.savefig('../send_plots/' +  seq_ccc[i][0] + '_' + str(seq_ccc[i][1])[:5] + '_valence.png')
-        plt.close(fig)
+        # t = []
+        # curr_t = 0.0
+        # for ii in actual_r:
+        #     t.append(curr_t)
+        #     curr_t += 5
+        # fig = plt.figure()
+        # plt.plot(t, pred_r, '-' , color='r', linewidth=2.0, label='Prediction')
+        # plt.legend()
+        # plt.plot(t, actual_r, '--' , color='b', linewidth=2.0, label='Actual')
+        # plt.legend()
+        # plt.savefig('../send_plots/' +  seq_ccc[i][0] + '_' + str(seq_ccc[i][1])[:5] + '_valence.png')
+        # plt.close(fig)
 
         weights = weights_total[seq_index[i]]
         word = saved_text[seq_index[i]]
+
+        tf_attn = tf_attns_total[seq_index[i]]
+        ctx_attn = ctx_attns_total[seq_index[i]]
+
         # print(word)
         ccc = seq_ccc[i][1]
         seq_id = seq_ccc[i][0]
         print("Video Id: " + seq_id + " with CCC: " + str(ccc))
+        seq_ccc_plot[seq_id] = ccc
 
         if seq_id not in labels_plot.keys():
             labels_plot[seq_id] = []
@@ -616,8 +630,14 @@ def SEND(args):
             if seq_id not in weights_plot.keys():
                 weights_plot[seq_id] = []
                 sentence_plot[seq_id] = []
+                tf_attns_plot[seq_id] = []
+                ctx_attns_plot[seq_id] = []
+
             weights_plot[seq_id].append(norm_word_w_t)
             sentence_plot[seq_id].append(word_t)
+
+            tf_attns_plot[seq_id].append(tf_attn[t,:,:,:len(word_t),:len(word_t)].tolist())
+            ctx_attns_plot[seq_id].append(ctx_attn[t,:len(word_t)].tolist())
 
             for i in range(len(word_t)):
                 # normalize by the length as well
@@ -654,6 +674,9 @@ def SEND(args):
     pickle.dump( weights_plot, open("../nlap/seq_weights_test_send.p", "wb") )
     pickle.dump( labels_plot, open("../nlap/seq_labels_test_send.p", "wb") )
     pickle.dump( sentence_plot, open("../nlap/seq_sentences_test_send.p", "wb") )
+    pickle.dump( tf_attns_plot, open("../nlap/seq_tf_attns_test_send.p", "wb") )
+    pickle.dump( ctx_attns_plot, open("../nlap/seq_ctx_attns_test_send.p", "wb") )
+    pickle.dump( seq_ccc_plot, open("../nlap/seq_ccc_test_send.p", "wb") )
 
     return None
 

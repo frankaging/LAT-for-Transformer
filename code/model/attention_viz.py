@@ -29,6 +29,7 @@ import pickle
 from string import punctuation
 import statistics 
 import nltk, re
+from attention_util import *
 
 import logging
 logging.basicConfig(
@@ -650,6 +651,7 @@ def extract_attn_weight():
     multiclass_instance = 0
     binary_instance = 0
     weights = []
+    ctx_weights = []
     seq_ids = [k for k in test_data.keys()]
     sort_seq_ids = []
     back_out_method = 'nlap'
@@ -673,9 +675,10 @@ def extract_attn_weight():
             stringout = stringOut(sort_targets, output)
             # Weights and collect outputs
             weight = None
-            weight = model.backward_tf_attn(sort_feature, seq_len, mask)
+            weight, ctx_weight = model.backward_tf_attn(sort_feature, seq_len, mask)
             for i in range(weight.shape[0]):
                 weights.append(weight[i])
+                ctx_weights.append(ctx_weight[i])
                 stringOuts.append(stringout[i])
             sort_seq_ids.extend(sort_chunk_ids)
             multiclass, binary, binary_total = calculate_accuracy(output, sort_targets)
@@ -688,7 +691,6 @@ def extract_attn_weight():
     binary_accu = binary_correct*1.0/binary_instance
     logger.info('Test Set Performance\tmulti_acc: {:0.3f} \tbinary_acc: {:0.3f} \t'.\
         format(multi_accu, binary_accu))
-    print("Start visualization ...")
 
     # weights: (b, l)
     all_sentence = pickle.load( open( data_folder + "id_sentence.p", "rb" ) )
@@ -696,110 +698,34 @@ def extract_attn_weight():
     assert(len(test_sentence) == len(weights))
 
     id_tf_attns = dict()
+    id_ctx_attns = dict()
     for i in range(len(test_sentence)):
         tf_attn = weights[i]
+        ctx_attn = ctx_weights[i]
         # adjust the weights length based on sentence length
         s = test_sentence[i]
         id_tf_attns[sort_seq_ids[i]] = tf_attn[:,:,:len(s),:len(s)].tolist()
+        id_ctx_attns[sort_seq_ids[i]] = ctx_attn[:len(s)].tolist()
 
     pickle.dump( id_tf_attns, open("../nlap/id_tf_attns_sst.p", "wb") )
+    pickle.dump( id_ctx_attns, open("../nlap/id_ctx_attns_sst.p", "wb") )
 
-def main(args):
-
+def SST(args):
+    '''
+    This is just for the SST. Please use the notebook for examples.
+    '''
     # load the transformer attention to memory for all samples
     id_tf_attns = pickle.load( open("../nlap/id_tf_attns_sst.p", "rb" ) )
+    id_ctx_attns = pickle.load( open("../nlap/id_ctx_attns_sst.p", "rb" ) )
+    id_labels = pickle.load( open( "../nlap/id_labels_test_sst.p", "rb" ) )
     data_folder = "../../../Stanford-Sentiment-Treebank/"
     all_sentence = pickle.load( open( data_folder + "id_sentence.p", "rb" ) )
 
     for seq in id_tf_attns.keys():
         tf_attns = torch.FloatTensor(id_tf_attns[seq])
         sentence = all_sentence[seq]
-
-        # input params
-        tokens = tf_attns.shape[2]
-        layers = 6
-        heads = 8
-
-        # let us skip visualization long sequence
-        if tokens != 10:
-            continue
-
-        print("Visualizing sentence:")
-        print(sentence)
-
-        # generate points for making the connection plot
-        point_offset = 0.1
-        box_offset = 0.3
-        layer_offset = point_offset * (tokens-1)
-
-        # generate pair (of two points) and attention weight of the pair
-        pair_weight = dict()
-        pair_layer = dict()
-        pair_head = dict()
-        for i in range(heads):
-            for j in range(layers):
-                # for layer j, head i, we want to all the point pairs and weight
-                base_x = i*(layer_offset + box_offset)
-                base_y = j*(layer_offset + box_offset)
-                # iteration through all the tokens to form pairs
-                for k in range(tokens):
-                    k_x = base_x
-                    k_y = base_y + k*(point_offset)
-                    for l in range(tokens):
-                        l_x = base_x + layer_offset
-                        l_y = base_y + l*(point_offset)
-                        pair_weight[((k_x, k_y),(l_x, l_y))] = \
-                            tf_attns[i, layers-j-1, tokens-l-1, tokens-k-1]
-                        pair_layer[((k_x, k_y),(l_x, l_y))] = j
-                        pair_head[((k_x, k_y),(l_x, l_y))] = i
-        
-        colors = ['chocolate', 'blueviolet', 'red', 'green', 'orange', 'dodgerblue']
-
-        # plot all the points, and connect them with lines
-        fig = plt.figure()
-        ax = fig.add_subplot(1, 1, 1) # nrows, ncols, index
-        for pair in pair_weight.keys():
-            plt.plot([pair[0][0], pair[1][0]], 
-                    [pair[0][1], pair[1][1]], 
-                    'w-',
-                    linewidth=1,
-                    alpha=pair_weight[pair],
-                    color=colors[pair_layer[pair]])
-        ax.set_facecolor('black')
-        plt.xticks([(i*(layer_offset + box_offset)+layer_offset*0.5) for i in range(heads)], ['0', '1', '2', '3', '4', '5', '6', '7'])
-        plt.yticks([(i*(layer_offset + box_offset)+layer_offset*0.5) for i in range(layers)], ['5', '4', '3', '2', '1', '0'])
-        ax.xaxis.tick_top()
-        ax.tick_params(axis='x', colors='grey')
-        ax.tick_params(axis='y', colors='grey')
-        ax.tick_params(axis=u'both', which=u'both',length=0)
-        plt.xlabel('Heads', fontsize=15)
-        plt.ylabel('Layers', fontsize=15)
-        ax.xaxis.set_label_position('top')
-        ax.xaxis.label.set_color('grey')
-        ax.yaxis.label.set_color('grey')
-
-        # annotate with the text of this sentence
-        annotate_str = "["
-        for word in sentence:
-            annotate_str += "\"" + word + "\"" + ", "
-        annotate_str = annotate_str[:-2]
-        annotate_str += "]"
-
-        ax.annotate(annotate_str,  # Your string
-                    # The point that we'll place the text in relation to 
-                    xy=(0.5, 0), 
-                    # Interpret the x as axes coords, and the y as figure coords
-                    xycoords=('axes fraction', 'figure fraction'),
-                    # The distance from the point that the text will be at
-                    xytext=(0, 10),  
-                    # Interpret `xytext` as an offset in points...
-                    textcoords='offset points',
-                    # Any other text parameters we'd like
-                    size=14, ha='center', va='bottom',
-                    color='grey')
-        
-        plt.savefig('../tf_attns_plots/' + str(seq) + '.png', bbox_inches='tight')
-        plt.close(fig)
+        # calling the visualization helper
+        head_attn_viz_func(tf_attns, sentence, seq)
 
 def load_token_dict_sst(sentence):
     data_folder = "../../../Stanford-Sentiment-Treebank/"
@@ -925,8 +851,8 @@ if __name__ == "__main__":
 
     # extract_attn_weight()
 
-    # main(args)
+    # SST(args)
 
     #load_token_dict_sst()
 
-    emotion_tag_viz()
+    #emotion_tag_viz()
