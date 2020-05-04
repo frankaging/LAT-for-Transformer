@@ -48,7 +48,7 @@ python attn_analyze.py -dataset [SEND or SST]
 For generating word cloud based on attentions,
 ```python
 cd code/model
-python word_cloud.py --dataset [SEND or SST]
+python word_cloud.py -dataset [SEND or SST]
 ```
 
 For generating word cloud based on attentions,
