@@ -1,9 +1,11 @@
-# The Transformer Attends to Semantics: A General Method for Backing Out Meaningful Self-attention Scores
-Codebase for our submussion to EMNLP2020 Confluence
+# Structured Self-Attention Weights Encode Semantics in Sentiment Analysis
+Code base for the paper accepted to the BlackboxNLP at EMNLP2020.
 
 ## Description
-In this paper, we propose a Layer-wise Attention Tracing (LAT) method for backing out the attention score assigned to input tokens within a self-attention architecture.
-We apply LAT to Transformer models trained on two tasks that have surface dissimilarities, but share common semantics: sentiment analysis of movie reviews and valence prediction in life story narratives. Across both tasks, the highly-attended words picked out by LAT tend to be rich in emotional semantics, as validated by an emotion lexicon.
+In this paper, we show that self-attention scores encodes simple semantics by considering sentiment analysis tasks. In contrast to gradient-based feature 
+attribution methods that leverage gradients, we propose a simple yet effective Layer-wise Attention Tracing (LAT) method to analyze structured attention weights which in turn yields semantically meaningful explanations.
+<img src="https://i.ibb.co/WcXBX81/lat-v1-4.png" width="300">
+  - Attention tracing diagram through self-attention layers in the Transformer model.
 
 ## Models and Datasets
 
@@ -15,6 +17,12 @@ This model is for one of experiment running on Stanford Sentiment Treebank Datas
 
 ### Datasets
 You will first need to download all the datasets needed and put it under the desired folder in a designed format. Then, you need to place the datasets under a desired directory. You may change where you save the dataset in our code. You will also need Warriner dictionary place under a desired directory, and you may need to change code accordingly.
+
+## Visualizations of attention flows you can produce
+Our visualization methods in `code/model/attention_viz.ipynb` are extensible for all transformer-like model. You need to pass in the attention weights and the input tokens, and it will generate a flow diagram like this for you.
+<img src="https://i.ibb.co/zG2mFJy/tf-attn-tracing-v2-2.png" width="300">
+  - You are given triples include (Reference Color Lable, Modifier, Target Color Label)
+  - For color lables, you are given RGB vectors related to these colors. Each color will have a set of RGB vectors. It is not a **one to one** mapping.
 
 ## How to reproduce all of our results:
 
