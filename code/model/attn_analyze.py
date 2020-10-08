@@ -36,6 +36,9 @@ logging.basicConfig(
     ])
 logger = logging.getLogger()
 
+def count_parameters(model):
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
 def eval_ccc(y_true, y_pred):
     """Computes concordance correlation coefficient."""
     true_mean = np.mean(y_true)
@@ -119,6 +122,7 @@ def evaluateOnEval(input_data, input_target, lengths, token_lengths, model, crit
     model.eval()
     predictions = []
     weights_total = []
+    gs_total = []
     tf_attns_total = []
     ctx_attns_total = []
     actuals = []
@@ -139,6 +143,7 @@ def evaluateOnEval(input_data, input_target, lengths, token_lengths, model, crit
         # send all data to the device
         for mod in list(data.keys()):
             data[mod] = data[mod].to(args.device)
+            data[mod] = Variable(data[mod], requires_grad=True)
         target = target.to(args.device)
         # Run forward pass
         output = model.forward(data, lengths, token_lengths, mask)
@@ -148,6 +153,11 @@ def evaluateOnEval(input_data, input_target, lengths, token_lengths, model, crit
         tf_attns_total.append(tf_weights)
         ctx_attns_total.append(ctx_weights)
         weights_total.append(weights)
+
+        # get gradient w.r.t. inputs here
+        output.backward(torch.ones_like(output))
+        grad_sa = (data[mod].grad**2).sum(dim=-1).squeeze(dim=0)
+        gs_total.append(grad_sa) 
 
         predictions.append(output.reshape(-1).tolist())
         actuals.append(target.reshape(-1).tolist())
@@ -167,7 +177,7 @@ def evaluateOnEval(input_data, input_target, lengths, token_lengths, model, crit
         index += 1
     # Average losses and print
     loss /= data_num
-    return ccc, predictions, actuals, weights_total, tf_attns_total, ctx_attns_total
+    return ccc, predictions, actuals, weights_total, tf_attns_total, ctx_attns_total, gs_total
 
 def plot_predictions(dataset, predictions, metric, args, fig_path=None):
     """Plots predictions against ratings for representative fits."""
@@ -497,10 +507,13 @@ def SEND(args):
     criterion = nn.MSELoss(reduction='sum')
     # construct model and params setting
     eval_dir = "Test"
-    model_path = os.path.join("../save_model/df5f97d3", 'best-model.pth')
+    model_path = args.model_path
     model = TransformerLSTMAttn(mods=args.modalities, dims=mod_dimension, device=args.device)
     # Setting the optimizer
     optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-4)
+
+    # print(count_parameters(model))
+    # return
 
     print("evaluating on the " + eval_dir + " Set.")
     eval_data = load_data(args.modalities, args.data_dir, eval_dir)
@@ -542,10 +555,9 @@ def SEND(args):
     model.load_state_dict(checkpoint['model'])
 
     # evalution
-    with torch.no_grad():
-        ccc, pred, actuals, weights_total, tf_attns_total, ctx_attns_total = \
-            evaluateOnEval(input_padded_eval, ratings_padded_eval, seq_lens_eval, token_lens_eval,
-                            model, criterion, args)
+    ccc, pred, actuals, weights_total, tf_attns_total, ctx_attns_total, gs_total = \
+        evaluateOnEval(input_padded_eval, ratings_padded_eval, seq_lens_eval, token_lens_eval,
+                        model, criterion, args)
     stats = {'ccc': np.mean(ccc), 'ccc_std': np.std(ccc)}
     logger.info('Evaluation\tCCC(std): {:2.5f}({:2.5f})'.\
         format(stats['ccc'], stats['ccc_std']))
@@ -569,12 +581,14 @@ def SEND(args):
     print("Writing to files...")
     post_file = "_send.csv"
     word_level_w = dict()
+    word_level_gs = dict()
     word_level_c = dict()
 
     # save id to weights mapping for other plots
     weights_plot = dict()
     labels_plot = dict()
     sentence_plot = dict()
+    gs_plot = dict()
 
     tf_attns_plot = dict()
     ctx_attns_plot = dict()
@@ -600,6 +614,7 @@ def SEND(args):
         # plt.close(fig)
 
         weights = weights_total[seq_index[i]]
+        gs = gs_total[seq_index[i]]
         word = saved_text[seq_index[i]]
 
         tf_attn = tf_attns_total[seq_index[i]]
@@ -621,7 +636,10 @@ def SEND(args):
             word_t = [w.strip().strip(punctuation).lower() for w in word[t]]
 
             word_w = weights[t].tolist()[:len(word_t)]
+            word_gs = gs[t].tolist()[:len(word_t)]
+
             norm_word_w_t = softmax(word_w).tolist()
+            norm_word_gs_t = softmax(word_gs).tolist()
             # norm_word_w_t = normalize_lap(word_w)
             # print(norm_word_w_t)
 
@@ -632,9 +650,11 @@ def SEND(args):
                 sentence_plot[seq_id] = []
                 tf_attns_plot[seq_id] = []
                 ctx_attns_plot[seq_id] = []
+                gs_plot[seq_id] = []
 
             weights_plot[seq_id].append(norm_word_w_t)
             sentence_plot[seq_id].append(word_t)
+            gs_plot[seq_id].append(norm_word_gs_t)
 
             tf_attns_plot[seq_id].append(tf_attn[t,:,:,:len(word_t),:len(word_t)].tolist())
             ctx_attns_plot[seq_id].append(ctx_attn[t,:len(word_t)].tolist())
@@ -642,41 +662,49 @@ def SEND(args):
             for i in range(len(word_t)):
                 # normalize by the length as well
                 w_i = 1.0 * norm_word_w_t[i]
+                gs_i = 1.0 * norm_word_gs_t[i]
                 w_s = word_t[i]
                 if w_s not in word_level_w.keys():
                     word_level_w[w_s] = [w_i]
+                    word_level_gs[w_s] = [gs_i]
                 else:
                     word_level_w[w_s].append(w_i)
+                    word_level_gs[w_s].append(gs_i)
                 if w_s not in word_level_c.keys():
                     word_level_c[w_s] = 1
                 else:
                     word_level_c[w_s] = word_level_c[w_s] + 1
 
-    output_file = "../nlap/" + "words_" + eval_dir + post_file
+    output_file = args.out_dir + "/words_" + eval_dir + post_file
     word_level_w = [(k, v) for k, v in word_level_w.items()] 
+    
     with open(output_file, mode='w') as csv_file:
         file_writer = csv.writer(csv_file, delimiter=',')
-        header = ["word", "count", "sum", "avg", "std"]
+        header = ["word", "count", "sum", "avg", "std", "sum_gs", "avg_gs", "std_gs"]
         file_writer.writerow(header)
         for kv in word_level_w:
             var = 0.0
+            var_gs = 0.0
+            kv_gs = word_level_gs[kv[0]]
             if len(kv[1]) > 1:
                 var = statistics.stdev(kv[1])
+                var_gs = statistics.stdev(kv_gs)
             row = [kv[0], word_level_c[kv[0]], sum(kv[1]),
-                   sum(kv[1])*1.0/word_level_c[kv[0]],
-                   var]
+                   sum(kv[1])*1.0/word_level_c[kv[0]], var,
+                   sum(kv_gs), sum(kv_gs)*1.0/word_level_c[kv[0]], var_gs]
             file_writer.writerow(row)
 
     # save id to weight mapping
     import pickle
     # print(labels_plot)
     # print(sentence_plot)
-    pickle.dump( weights_plot, open("../nlap/seq_weights_test_send.p", "wb") )
-    pickle.dump( labels_plot, open("../nlap/seq_labels_test_send.p", "wb") )
-    pickle.dump( sentence_plot, open("../nlap/seq_sentences_test_send.p", "wb") )
-    pickle.dump( tf_attns_plot, open("../nlap/seq_tf_attns_test_send.p", "wb") )
-    pickle.dump( ctx_attns_plot, open("../nlap/seq_ctx_attns_test_send.p", "wb") )
-    pickle.dump( seq_ccc_plot, open("../nlap/seq_ccc_test_send.p", "wb") )
+    pickle.dump( weights_plot, open(args.out_dir + "/seq_weights_test_send.p", "wb") )
+    pickle.dump( gs_plot, open(args.out_dir + "/seq_gs_test_send.p", "wb") )
+    pickle.dump( labels_plot, open(args.out_dir + "/seq_labels_test_send.p", "wb") )
+    pickle.dump( sentence_plot, open(args.out_dir + "/seq_sentences_test_send.p", "wb") )
+    pickle.dump( tf_attns_plot, open(args.out_dir + "/seq_tf_attns_test_send.p", "wb") )
+    pickle.dump( ctx_attns_plot, open(args.out_dir + "/seq_ctx_attns_test_send.p", "wb") )
+    pickle.dump( seq_ccc_plot, open(args.out_dir + "/seq_ccc_test_send.p", "wb") )
 
     return None
 
@@ -820,7 +848,7 @@ def SST(args):
 
     # Loading the data
     print("Loading SST data ...")
-    data_folder = "../../../Stanford-Sentiment-Treebank/"
+    data_folder = args.data_dir
     import pickle
     test_data = pickle.load( open( data_folder + "id_embed_test.p", "rb" ) )
     test_target = pickle.load( open( data_folder + "id_rating_test.p", "rb" ) )
@@ -848,9 +876,12 @@ def SST(args):
     # construct model
     model = TransformerLinearAttn(mods=args.modalities, dims=mod_dimension, device=args.device)
     # load model
-    model_path = os.path.join("../save_model/bd01a5fa", 'best-model-SST-m.pth')
+    model_path = args.model_path
     checkpoint = load_checkpoint(model_path, args.device)
     model.load_state_dict(checkpoint['model'])
+
+    # print(count_parameters(model))
+    # return
 
     loss = 0.0
     best_multi_acur = -1.0
@@ -861,39 +892,47 @@ def SST(args):
     multiclass_instance = 0
     binary_instance = 0
     weights = []
+    gradients = []
     seq_ids = [k for k in test_data.keys()]
     sort_seq_ids = []
-    back_out_method = 'nlap'
 
     model.eval()
     # save for output labels
     stringOuts = []
     print("Running forward step to extract weights ...")
     # get the loss of test set
-    with torch.no_grad():
-        # for each epoch do the training
-        for sort_feature, sort_targets, seq_len, mask, sort_chunk_ids in \
-            generateBatchSST(test_data, test_class, seq_ids, args, batch_size=500):
-            # send to device
-            mask = mask.to(args.device)
-            sort_feature = sort_feature.to(args.device)
-            sort_targets = sort_targets.to(args.device)
-            # Run forward pass.
-            output = model(sort_feature, seq_len, mask)
-            # produce readable string encoded results
-            stringout = stringOut(sort_targets, output)
-            # Weights and collect outputs
-            weight = None
-            weight = model.backward_nlap(sort_feature, seq_len, mask)
-            for i in range(weight.shape[0]):
-                weights.append(weight[i])
-                stringOuts.append(stringout[i])
-            sort_seq_ids.extend(sort_chunk_ids)
-            multiclass, binary, binary_total = calculate_accuracy(output, sort_targets)
-            multiclass_correct += multiclass
-            multiclass_instance += len(seq_len)
-            binary_correct += binary
-            binary_instance += binary_total
+    model.zero_grad()
+    # for each epoch do the training
+    for sort_feature, sort_targets, seq_len, mask, sort_chunk_ids in \
+        generateBatchSST(test_data, test_class, seq_ids, args, batch_size=500):
+        # send to device
+        mask = mask.to(args.device)
+        sort_feature = sort_feature.to(args.device)
+        sort_targets = sort_targets.to(args.device)
+        # Run forward pass.
+        sort_feature = Variable(sort_feature, requires_grad=True)
+        output = model(sort_feature, seq_len, mask)
+
+        # produce readable string encoded results
+        stringout = stringOut(sort_targets, output)
+        # Weights and collect outputs
+        weight = None
+        weight = model.backward_nlap(sort_feature, seq_len, mask)
+        for i in range(weight.shape[0]):
+            weights.append(weight[i])
+            stringOuts.append(stringout[i])
+        sort_seq_ids.extend(sort_chunk_ids)
+        multiclass, binary, binary_total = calculate_accuracy(output, sort_targets)
+        multiclass_correct += multiclass
+        multiclass_instance += len(seq_len)
+        binary_correct += binary
+        binary_instance += binary_total
+
+        # get gradient w.r.t. inputs here
+        output.backward(torch.ones_like(output))
+        grad_sa = (sort_feature.grad**2).sum(dim=-1)
+        for i in range(weight.shape[0]):
+            gradients.append(grad_sa[i])
 
     multi_accu = multiclass_correct*1.0/multiclass_instance
     binary_accu = binary_correct*1.0/binary_instance
@@ -906,53 +945,69 @@ def SST(args):
     assert(len(test_sentence) == len(weights))
 
     word_level_w = dict()
+    word_level_g = dict()
     word_level_c = dict()
 
     # save id to weights mapping for other plots
     id_weights = dict()
     id_labels = dict()
+    id_gradients = dict()
 
     for i in range(len(test_sentence)):
         w = weights[i]
+        g = gradients[i]
         s = test_sentence[i]
         w_r_pre = w[:len(s)].tolist()
+        g_r_pre = g[:len(s)].tolist()
 
         w_r = None
         w_r = softmax(w_r_pre) 
+        g_r = softmax(g_r_pre) 
         id_weights[sort_seq_ids[i]] = w_r.tolist()
         id_labels[sort_seq_ids[i]] = stringOuts[i]
+        id_gradients[sort_seq_ids[i]] = g_r.tolist()
 
         # assign scores based on softmax results and sentence length
         for i in range(len(s)):
             w_w = w_r[i] * 1.0
+            g_w = g_r[i] * 1.0
             w_s = s[i]
             if w_s not in word_level_w.keys():
                 word_level_w[w_s] = [w_w]
+                word_level_g[w_s] = [g_w]
             else:
-                word_level_w[w_s].append(w_w)                          
+                word_level_w[w_s].append(w_w)   
+                word_level_g[w_s].append(g_w)      
             if w_s not in word_level_c.keys():
                 word_level_c[w_s] = 1
             else:
                 word_level_c[w_s] = word_level_c[w_s] + 1
     
     # save id to weight mapping
-    pickle.dump( id_weights, open("../" + back_out_method + "/id_weights_test_sst.p", "wb") )
-    pickle.dump( id_labels, open("../" + back_out_method + "/id_labels_test_sst.p", "wb") )
+    pickle.dump( id_gradients, open( args.out_dir + "/id_gradients_test_sst.p", "wb") )
+    pickle.dump( id_weights, open(args.out_dir + "/id_weights_test_sst.p", "wb") )
+    pickle.dump( id_labels, open(args.out_dir + "/id_labels_test_sst.p", "wb") )
 
     # summarize and write to a file
-    output_file = "../" + back_out_method + "/words_Test_sst.csv"
+    output_file = args.out_dir + "/words_Test_sst.csv"
     word_level_w = [(k, v) for k, v in word_level_w.items()] 
+
     with open(output_file, mode='w') as csv_file:
         file_writer = csv.writer(csv_file, delimiter=',')
-        header = ["word", "count", "sum", "avg", "std"]
+        header = ["word", "count", "sum", "avg", "std", "sum_gs", "avg_gs", "std_gs"]
         file_writer.writerow(header)
+
         for kv in word_level_w:
+            kv_gs = word_level_g[kv[0]]
             var = 0.0
+            var_gs = 0.0
             if len(kv[1]) > 1:
                 var = statistics.stdev(kv[1])
+                var_gs = statistics.stdev(kv_gs)
+
             row = [kv[0], word_level_c[kv[0]], sum(kv[1]),
-                   sum(kv[1])*1.0/word_level_c[kv[0]],
-                   var]
+                   sum(kv[1])*1.0/word_level_c[kv[0]], var,
+                   sum(kv_gs), sum(kv_gs)*1.0/word_level_c[kv[0]], var_gs]
             file_writer.writerow(row)
 
 def main(args):
@@ -971,7 +1026,11 @@ if __name__ == "__main__":
                         help='learning rate (default: 1e-4)')
     parser.add_argument('--data_dir', type=str, default="../../../SENDv1-data",
                         help='path to data base directory')
-    parser.add_argument('--dataset', type=str, default="SST",
-                        help='the dataset we want to run (default: SST)')
+    parser.add_argument('--dataset', type=str, default="SEND",
+                        help='the dataset we want to run (default: SEND)')
+    parser.add_argument('--model_path', type=str, default="../df5f97d3/best-model.pth",
+                        help='path to the saved model (end with .pth)')
+    parser.add_argument('--out_dir', type=str, default="../save_lap/",
+                        help='the directory to save all the results')
     args = parser.parse_args()
     main(args)

@@ -458,10 +458,8 @@ def load_data(modalities, data_dir, eval_dir=None):
     print("Loading data...")
     if eval_dir == None:
         train_data = load_dataset(modalities, data_dir, 'Train',
-                                base_rate=args.base_rate,
                                 truncate=True, item_as_dict=True)
         test_data = load_dataset(modalities, data_dir, 'Valid',
-                                base_rate=args.base_rate,
                                 truncate=True, item_as_dict=True)
         print("Done.")
         return train_data, test_data
@@ -708,8 +706,9 @@ def SEND(args):
                              model, criterion, args)
             if stats['ccc'] > best_ccc:
                 best_ccc = stats['ccc']
-                path = os.path.join("../save_model/", 'best-model.pth')
-                save_checkpoint(args.modalities, mod_dimension, window_size, model, path)
+                if not args.unit_test:
+                    path = os.path.join(args.model_dir, 'best-model.pth')
+                    save_checkpoint(args.modalities, mod_dimension, window_size, model, path)
             if stats['max_ccc'] > single_best_ccc:
                 single_best_ccc = stats['max_ccc']
                 logger.info('===single_max_predict===')
@@ -836,7 +835,7 @@ def SST(args):
 
     # Loading the data
     print("Loading SST data ...")
-    data_folder = "../../../Stanford-Sentiment-Treebank/"
+    data_folder = args.data_dir
     import pickle
     train_data = pickle.load( open( data_folder + "id_embed_train.p", "rb" ) )
     valid_data = pickle.load( open( data_folder + "id_embed_valid.p", "rb" ) )
@@ -911,6 +910,7 @@ def SST(args):
             multi = []
             binary = []
             with torch.no_grad():
+                model.eval()
                 # for each epoch do the training
                 for sort_feature, sort_targets, seq_len, mask in \
                     generateBatchSST(valid_data, valid_class, args, batch_size=args.batch_size):
@@ -934,15 +934,17 @@ def SST(args):
 
             multi_accu = multiclass_correct*1.0/multiclass_instance
             binary_accu = binary_correct*1.0/binary_instance
-            if multi_accu > best_multi_acur:
-                # save model
-                path = os.path.join("../save_model/", 'best-model-SST-m.pth')
-                save_checkpoint(args.modalities, mod_dimension, -1, model, path)
 
-            if binary_accu > best_binary_acur:
-                # save model
-                path = os.path.join("../save_model/", 'best-model-SST-b.pth')
-                save_checkpoint(args.modalities, mod_dimension, -1, model, path)
+            if not args.unit_test:
+                if multi_accu > best_multi_acur:
+                    # save model
+                    path = os.path.join(args.model_dir, 'best-model-SST-m.pth')
+                    save_checkpoint(args.modalities, mod_dimension, -1, model, path)
+
+                if binary_accu > best_binary_acur:
+                    # save model
+                    path = os.path.join(args.model_dir, 'best-model-SST-b.pth')
+                    save_checkpoint(args.modalities, mod_dimension, -1, model, path)
 
             if multi_accu > best_multi_acur:
                 best_multi_acur = multi_accu
@@ -963,10 +965,14 @@ if __name__ == "__main__":
                         help='number of epochs to train (default: 300)')
     parser.add_argument('--lr', type=float, default=1e-4, metavar='LR',
                         help='learning rate (default: 1e-4)')
-    parser.add_argument('--data_dir', type=str, default="../../../SENDv1-data",
+    parser.add_argument('--data_dir', type=str, default="../../../SENDv1_data_EMNLP2020",
                         help='path to data base directory')
-    parser.add_argument('--dataset', type=str, default="SST",
-                        help='the dataset we want to run (default: SST)')
+    parser.add_argument('--unit_test', type=bool, default=True,
+                        help='whether you are just playing with it')
+    parser.add_argument('--model_dir', type=str, default="../save_model/",
+                        help='path to data base directory')
+    parser.add_argument('--dataset', type=str, default="SEND",
+                        help='the dataset we want to run (default: SEND)')
     parser.add_argument('--device', type=str, default='cuda:0',
                         help='device to use (default: cuda:0 if available)')
     parser.add_argument('--eval_freq', type=int, default=1, metavar='N',

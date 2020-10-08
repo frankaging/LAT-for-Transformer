@@ -102,7 +102,7 @@ class TransformerLinearAttn(nn.Module):
         self.device = (device if torch.cuda.is_available() else
                        torch.device('cpu'))
         self.to(self.device)
-    
+
     def forward(self, inputs, length, mask=None):
         batch_size = inputs.shape[0]
         seq_len = inputs.shape[1]

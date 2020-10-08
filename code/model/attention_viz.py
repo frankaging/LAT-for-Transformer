@@ -599,13 +599,10 @@ def stringOut(sort_targets, output):
         ret.append((actual, predict))
     return ret
 
-def birdview_tf_attention(tf_attn_weights):
-    pass
-
 def get_attn_weight(i,j,k,l):
     return random.uniform(0, 1)
 
-def extract_attn_weight():
+def extract_attn_weight(args):
     print("Start analyzing SST trained models ...")
     # Fix random seed
     torch.manual_seed(1)
@@ -621,7 +618,7 @@ def extract_attn_weight():
 
     # Loading the data
     print("Loading SST data ...")
-    data_folder = "../../../Stanford-Sentiment-Treebank/"
+    data_folder = args.data_dir
     test_data = pickle.load( open( data_folder + "id_embed_test.p", "rb" ) )
     test_target = pickle.load( open( data_folder + "id_rating_test.p", "rb" ) )
     assert(len(test_data) == len(test_target))
@@ -638,7 +635,7 @@ def extract_attn_weight():
     # construct model
     model = TransformerLinearAttn(mods=args.modalities, dims=mod_dimension, device=args.device)
     # load model
-    model_path = os.path.join("../save_model/bd01a5fa", 'best-model-SST-m.pth')
+    model_path = args.model_path
     checkpoint = load_checkpoint(model_path, args.device)
     model.load_state_dict(checkpoint['model'])
 
@@ -707,29 +704,12 @@ def extract_attn_weight():
         id_tf_attns[sort_seq_ids[i]] = tf_attn[:,:,:len(s),:len(s)].tolist()
         id_ctx_attns[sort_seq_ids[i]] = ctx_attn[:len(s)].tolist()
 
-    pickle.dump( id_tf_attns, open("../nlap/id_tf_attns_sst.p", "wb") )
-    pickle.dump( id_ctx_attns, open("../nlap/id_ctx_attns_sst.p", "wb") )
+    pickle.dump( id_tf_attns, open(args,out_dir + "/id_tf_attns_sst.p", "wb") )
+    pickle.dump( id_ctx_attns, open(out_dir + "/id_ctx_attns_sst.p", "wb") )
 
-def SST(args):
-    '''
-    This is just for the SST. Please use the notebook for examples.
-    '''
-    # load the transformer attention to memory for all samples
-    id_tf_attns = pickle.load( open("../nlap/id_tf_attns_sst.p", "rb" ) )
-    id_ctx_attns = pickle.load( open("../nlap/id_ctx_attns_sst.p", "rb" ) )
-    id_labels = pickle.load( open( "../nlap/id_labels_test_sst.p", "rb" ) )
-    data_folder = "../../../Stanford-Sentiment-Treebank/"
-    all_sentence = pickle.load( open( data_folder + "id_sentence.p", "rb" ) )
-
-    for seq in id_tf_attns.keys():
-        tf_attns = torch.FloatTensor(id_tf_attns[seq])
-        sentence = all_sentence[seq]
-        # calling the visualization helper
-        head_attn_viz_func(tf_attns, sentence, seq)
-
-def load_token_dict_sst(sentence):
-    data_folder = "../../../Stanford-Sentiment-Treebank/"
-
+def load_token_dict_sst(args):
+    data_folder = args.data_dir
+    sentence = pickle.load( open( data_folder + "id_sentence.p", "rb" ) )
     # Load phrase mapping
     phrase = dict()
     phrase_file = data_folder + "root/dictionary.txt"
@@ -774,85 +754,19 @@ def load_token_dict_sst(sentence):
             token_rate_cs.append(token_rate_c)
         sentece_token_rate[seq] = token_rate_cs[:]
 
-    pickle.dump( sentece_token_rate, open("../nlap/seq_token_rate.p", "wb") )
-
-def emotion_tag_viz():
-
-    # load the transformer attention to memory for all samples
-    id_tf_attns = pickle.load( open("../nlap/id_tf_attns_sst.p", "rb" ) )
-
-    data_folder = "../../../Stanford-Sentiment-Treebank/"
-    all_sentence = pickle.load( open( data_folder + "id_sentence.p", "rb" ) )
-
-    # load token dictionary
-    sentece_token_rate = pickle.load( open( "../nlap/seq_token_rate.p", "rb" ) )
-
-    layers = 6
-    heads = 8
-    emo_map = np.zeros((layers, heads))
-
-    for seq in id_tf_attns.keys():
-        tf_attns = torch.FloatTensor(id_tf_attns[seq])
-        sentence = all_sentence[seq]
-        # load token level SST label
-        token_rate = sentece_token_rate[seq]
-        # input params
-        tokens = tf_attns.shape[2]
-
-        for i in range(heads):
-            for j in range(layers):
-                unit_tf_attns = tf_attns[i,j] # reverse the layer here
-                tf_attns_sum = unit_tf_attns.sum(dim=0).tolist()
-                attn_sum = 0.0
-                for t in range(tokens):
-                    # we add if the token is very emotionally expressed
-                    if token_rate[t] == 1:
-                       attn_sum += tf_attns_sum[t]
-                head_sum = sum(tf_attns_sum) # normalize by the sentence length
-                emo_map[j,i] += ((attn_sum*1.0)/head_sum)
-
-
-    # normalize and plot seaborn
-    emo_map = emo_map
-    import seaborn as sns
-    ax = sns.heatmap(emo_map, annot=True, fmt=".0f", cmap="YlGnBu")
-    ax.xaxis.tick_top()
-    ax.tick_params(axis='x', colors='grey')
-    ax.tick_params(axis='y', colors='grey')
-    ax.tick_params(axis=u'both', which=u'both',length=0)
-    plt.xlabel('Heads', fontsize=15)
-    plt.ylabel('Layers', fontsize=15)
-    ax.xaxis.set_label_position('top')
-    ax.xaxis.label.set_color('grey')
-    ax.yaxis.label.set_color('grey')
-
-    ax.annotate("Attentions on Words with Negative Emotion Semantics",  # Your string
-                # The point that we'll place the text in relation to 
-                xy=(0.5, 0), 
-                # Interpret the x as axes coords, and the y as figure coords
-                xycoords=('axes fraction', 'figure fraction'),
-                # The distance from the point that the text will be at
-                xytext=(0, 10),  
-                # Interpret `xytext` as an offset in points...
-                textcoords='offset points',
-                # Any other text parameters we'd like
-                size=14, ha='center', va='bottom',
-                color='grey')
-
-    plt.show()
+    pickle.dump( sentece_token_rate, open(args.out_dir + "/seq_token_rate.p", "wb") )
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--dataset', type=str, default="SST",
-                        help='the dataset we want to run (default: SST)')
+    parser.add_argument('--data_dir', type=str, default="../../../Stanford-Sentiment-Treebank/",
+                        help='path to data base directory')
+    parser.add_argument('--model_path', type=str, default="../bd01a5fa/best-model-SST-m.pth",
+                        help='path to the saved model (end with .pth)')
+    parser.add_argument('--out_dir', type=str, default="../save_lap/",
+                        help='the directory to save all the results')
     args = parser.parse_args()
 
-    # TODO: Currentl, you have to run these calls in sequence
-
-    # extract_attn_weight()
-
-    # SST(args)
-
-    #load_token_dict_sst()
-
-    #emotion_tag_viz()
+    # These helper script should be combined with others.
+    # These are only for SST analysis
+    extract_attn_weight(args)
+    load_token_dict_sst(args)

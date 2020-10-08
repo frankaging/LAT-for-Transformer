@@ -114,7 +114,7 @@ class MultiseqDataset(Dataset):
                                     count += 1
                                     line = fd.readline()
                                     continue 
-                                w = line.strip().split("\t")[11:]
+                                w = line.strip().split("\t")[3:]
                                 w = [float(i) if i != 'nan' else 0.0 for i in w]
                                 d.append(w)
                                 line = fd.readline()

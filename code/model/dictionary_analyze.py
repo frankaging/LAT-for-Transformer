@@ -166,6 +166,7 @@ def SST(args):
     nlap = dict()
     nlap_std = dict()
     word_count = dict()
+    gs = dict()
     with open(nlap_file) as csvfile:
         readCSV = csv.reader(csvfile, delimiter=',')
         head = 1
@@ -176,6 +177,7 @@ def SST(args):
             word_count[row[0]] = int(row[1])
             nlap[row[0]] = float(row[3])
             nlap_std[row[0]] = float(row[4])
+            gs[row[0]] = float(row[6])
 
     unknown_pre = 0
     for word in set(nlap.keys()):
@@ -204,7 +206,7 @@ def SST(args):
         if word not in set(dict_score.keys()):
             if word not in lemma_word.keys():
                 # this should not happen
-                assert(False)
+                print(word)
             else:
                 if lemma_word[word] == '':
                     unknown_pre += 1
@@ -218,7 +220,7 @@ def SST(args):
     output_file = "../warriner_valence/Test_sst.csv"
     with open(output_file, mode='w') as csv_file:
         file_writer = csv.writer(csv_file, delimiter=',')
-        header = ["word", "count", "score", "std", "type", "warriner_valence"]
+        header = ["word", "count", "score", "std", "type", "warriner_valence", "gs"]
         file_writer.writerow(header)
         for word in word_count.keys():
             # only look at those overlapped words
@@ -231,11 +233,11 @@ def SST(args):
                         match_std.append(dict_std[match])
                     avg_score = sum(match_score) * 1.0 / len(match_score)
                     avg_std = sum(match_std) * 1.0 / len(match_std)
-                    row = [word, word_count[word], nlap[word], avg_std, "nlap", avg_score]
+                    row = [word, word_count[word], nlap[word], avg_std, "nlap", avg_score, gs[word]]
                     file_writer.writerow(row)
                 else:
                     row = [word, word_count[word], nlap[word], dict_std[lemma_word[word]], "nlap", \
-                           dict_score[lemma_word[word]]]
+                           dict_score[lemma_word[word]], gs[word]]
                     file_writer.writerow(row) 
     print("Writing to file: %s" % (output_file))
 
@@ -267,6 +269,7 @@ def SEND(args):
     nlap = dict()
     nlap_std = dict()
     word_count = dict()
+    gs = dict()
     with open(nlap_file) as csvfile:
         readCSV = csv.reader(csvfile, delimiter=',')
         head = 1
@@ -277,6 +280,7 @@ def SEND(args):
             word_count[row[0]] = int(row[1])
             nlap[row[0]] = float(row[3])
             nlap_std[row[0]] = float(row[4])
+            gs[row[0]] = float(row[6])
 
     unknown_pre = 0
     for word in set(nlap.keys()):
@@ -313,7 +317,7 @@ def SEND(args):
     output_file = "../warriner_valence/Test_send.csv"
     with open(output_file, mode='w') as csv_file:
         file_writer = csv.writer(csv_file, delimiter=',')
-        header = ["word", "count", "score", "std", "type", "warriner_valence"]
+        header = ["word", "count", "score", "std", "type", "warriner_valence", "gs"]
         file_writer.writerow(header)
         for word in word_count.keys():
             # only look at those overlapped words
@@ -326,11 +330,11 @@ def SEND(args):
                         match_std.append(dict_std[match])
                     avg_score = sum(match_score) * 1.0 / len(match_score)
                     avg_std = sum(match_std) * 1.0 / len(match_std)
-                    row = [word, word_count[word], nlap[word], avg_std, "nlap", avg_score]
+                    row = [word, word_count[word], nlap[word], avg_std, "nlap", avg_score, gs[word]]
                     file_writer.writerow(row)
                 else:
                     row = [word, word_count[word], nlap[word], dict_std[lemma_word[word]], "nlap", \
-                           dict_score[lemma_word[word]]]
+                           dict_score[lemma_word[word]], gs[word]]
                     file_writer.writerow(row) 
     print("Writing to file: %s" % (output_file))
 
